@@ -1,16 +1,16 @@
 ![Kubeflow](./_static/kf.png)
 
-# Infrastructure
+# Kubeflow <!-- omit from toc -->
 
-## Table of Contents
+## Table of Contents <!-- omit from toc -->
 
-1. Introduction
-2. [Components](#components)
-   - FSx
-   - EFS
-   - EKS
-3. [Post-Installation](#post-installation)
-4. [References](#references)
+- [Introduction](#introduction)
+- [Infrastructure](#infrastructure)
+  - [FSx](#fsx)
+  - [EFS](#efs)
+  - [EKS](#eks)
+- [Application](#application)
+- [Post-Installation](#post-installation)
 
 ---
 
@@ -23,16 +23,16 @@ After setting up the infrastructure, proceed to install the Kubeflow application
 
 ## Infrastructure
 
-FSx
+### FSx
 
 - This component creates the AWS FSx for Lustre file system used for each user's Home Directory in Kubeflow.
 
-EFS
+### EFS
 
 - This component creates the AWS Elastic File System used to provide additional volumes in Kubeflow.
 - Users can use this storage separately from their Home Directories.
 
-EKS
+### EKS
 
 - This component creates the Kubernetes cluster with AWS EKS.
 - The EKS terraform modules include pre-configured EKS, ALB, as well as other components such as Prometheus, Datadog, NFS Provisioner, etc.
