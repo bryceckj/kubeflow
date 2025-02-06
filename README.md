@@ -40,12 +40,12 @@ After setting up the infrastructure, proceed to install the Kubeflow application
 ## Application
 
 - Fork the kubeflow [manifests](https://github.com/kubeflow/manifests) repository
-- Copy [custom_manifests](./custom_manifests/) to forked manifests repo
+- Copy [custom_manifests](./custom_manifests) to forked manifests repo
    - Custom manifests include: 
       - app components such as pytorch-job and tensorflow
       - common components such as env-specific istio configs
       - env-specific deployments
-      - [volume configs](../kubeflow/custom_manifests/volumes/)
+      - [volume configs](../kubeflow/custom_manifests/volumes)
 
 - Update env-specific fields, especially tfvars files
 
