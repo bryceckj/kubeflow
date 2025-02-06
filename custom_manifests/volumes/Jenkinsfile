@@ -1,0 +1,131 @@
+pipeline {
+  agent {label 'aws-linux-usw2'} 
+  options { skipDefaultCheckout() }
+    stages {
+
+        stage('AWS Credentials') {
+            steps {
+                script {
+                    cleanWs()
+                    checkout scm
+                    sh '''
+hostname -i
+pwd
+ls -l
+export AWS_ROLE_ARN=$(awk -F'= ' '/jenkins_role/{gsub(/"/, "", $2); print $2}' Jenkins/${CLUSTER}/vars)
+aws sts get-caller-identity
+aws sts assume-role --role-session-name Jenkins01 --role-arn  ${AWS_ROLE_ARN} > awscre
+cat > ${WORKSPACE}/aws_credentials <<EOF
+[default]
+output = json
+region = $AWS_DEFAULT_REGION
+aws_access_key_id = $(jq -r .Credentials.AccessKeyId awscre)
+aws_secret_access_key = $(jq -r .Credentials.SecretAccessKey awscre)
+aws_session_token = $(jq -r .Credentials.SessionToken awscre)
+EOF
+                    '''
+                }
+            }
+        }
+
+        stage('Kubernetes Config') {
+            steps {
+                script {
+                    ansiColor('xterm') {
+                    sh '''
+                        pwd
+                        ls -l
+                        export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/aws_credentials
+                        aws sts get-caller-identity
+                        aws eks --region $AWS_DEFAULT_REGION update-kubeconfig --name ${KUBECONFIG_NAME}
+                        kubectl config get-contexts
+                        kubectl config current-context
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Go or NoGo') {
+            steps {
+                script {
+                    env.Proceed = input message: 'User input required',
+                    parameters: [choice(name: 'Do you want to continue with apply?', choices: 'no\nyes', description: 'Choose "yes" if you want to deploy this build')]
+                }
+            }
+        }
+
+        stage('FSx Volume Setup') {
+            when {
+                environment name: 'Proceed', value: 'yes'
+                expression { params.DESTROY == 'False' }
+                }
+                steps {
+                    script {
+                        ansiColor('xterm') {
+                            sh  ''' 
+                            pwd
+                            ls -l
+                            export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/aws_credentials
+                            cp /home/ec2-user/.kube/config ${WORKSPACE}/kubeconfig
+                            echo $(aws secretsmanager get-secret-value --secret-id FSX-${KUBECONFIG_NAME}-OUTPUTS --query SecretString --output text --region $AWS_DEFAULT_REGION) > fsxout
+                            dir_dns_name=$(jq -r .dir_dns_name fsxout)
+                            mount_name=$(jq -r .dir_mount_name fsxout)
+                            fsx_id=$(jq -r .dir_id fsxout)
+                            sed -i "s DIR_DNS_NAME $dir_dns_name g" volumes/fsx.yaml
+                            sed -i "s MOUNT_NAME $mount_name g" volumes/fsx.yaml
+                            sed -i "s FSX_ID $fsx_id g" volumes/fsx.yaml
+                            kubectl apply -f volumes/fsx.yaml
+                            '''
+                        }
+                    }
+                } 
+            }
+
+        stage('EFS Volume Setup') {
+            when {
+                environment name: 'Proceed', value: 'yes'
+                expression { params.DESTROY == 'False' }
+                }
+                steps {
+                    script {
+                        ansiColor('xterm') {
+                            sh  ''' 
+                            pwd
+                            ls -l
+                            export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/aws_credentials
+                            cp /home/ec2-user/.kube/config ${WORKSPACE}/kubeconfig
+                            echo $(aws secretsmanager get-secret-value --secret-id EFS-${KUBECONFIG_NAME}-OUTPUTS --query SecretString --output text --region $AWS_DEFAULT_REGION) > efsout
+                            efs_dns=$(jq -r .efs_dns efsout)
+                            sed -i "s EFS_DNS $efs_dns g" volumes/efs.yaml
+                            kubectl apply -f volumes/efs.yaml
+                            kubectl config unset contexts.${KUBECONFIG_ARN}
+                            kubectl config unset current-context
+                            kubectl config get-contexts
+                            '''
+                        }
+                    }
+                } 
+            }
+        stage('Kustomize Delete') {
+            when {
+                environment name: 'Proceed', value: 'yes'
+                expression { params.DESTROY == 'True' }
+                }
+                steps {
+                    script {
+                        ansiColor('xterm') {
+                            sh  ''' 
+                            pwd
+                            ls -l
+                            export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/aws_credentials
+                            cp /home/ec2-user/.kube/config ${WORKSPACE}/kubeconfig
+                            kubectl delete -f volumes/fsx.yaml
+                            kubectl delete -f volumes/efs.yaml
+                            '''
+                        }
+                    }
+                } 
+            }
+        } 
+    }

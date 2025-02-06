@@ -1,0 +1,117 @@
+---
+apiVersion: kubeflow.org/v1beta1
+kind: Profile
+metadata:
+  name: admin
+spec:
+  owner:
+    kind: User
+    name: <user_email>
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: admin
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: auth
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: cert-manager
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: default
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: istio-system
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: knative-eventing
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: knative-serving
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: kube-system
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: kubeflow
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: mgmt
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: monitoring
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: DOCKERCONF
+kind: Secret
+metadata:
+  name: regcred
+  namespace: serving
+type: kubernetes.io/dockerconfigjson

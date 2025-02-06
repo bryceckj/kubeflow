@@ -1,0 +1,105 @@
+pipeline {
+  agent {label 'aws-linux-usw2'} 
+  options { skipDefaultCheckout() }
+    stages {
+
+        stage('AWS Credentials') {
+            steps {
+                script {
+                    cleanWs()
+                    checkout scm
+                    sh '''
+JOB_BASE_NAME=$(echo $JOB_BASE_NAME|tr '[:upper:]' '[:lower:]')
+export AWS_ROLE_ARN=$(awk -F'= ' '/jenkins_role/{gsub(/"/, "", $2); print $2}' ${JOB_BASE_NAME}/Jenkins/${CLUSTER}/${CLUSTER}.auto.tfvars)
+aws sts get-caller-identity
+aws sts assume-role --role-session-name Jenkins01 --role-arn  ${AWS_ROLE_ARN} > awscre
+cat > ${WORKSPACE}/${JOB_BASE_NAME}/aws_credentials <<EOF
+[default]
+output = json
+region = $AWS_DEFAULT_REGION
+aws_access_key_id = $(jq -r .Credentials.AccessKeyId awscre)
+aws_secret_access_key = $(jq -r .Credentials.SecretAccessKey awscre)
+aws_session_token = $(jq -r .Credentials.SessionToken awscre)
+EOF
+curl -sL https://releases.hashicorp.com/terraform/1.0.9/terraform_1.0.9_linux_amd64.zip -o terraform.zip
+unzip terraform.zip
+                    '''
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                script {
+                    ansiColor('xterm') {
+                    sh '''
+                        JOB_BASE_NAME=$(echo $JOB_BASE_NAME|tr '[:upper:]' '[:lower:]') 
+                        pwd
+                        ls -l
+                        cd ${JOB_BASE_NAME}
+                        cp -r Jenkins/${CLUSTER}/* .
+                        export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/${JOB_BASE_NAME}/aws_credentials
+                        aws sts get-caller-identity
+                        TERRAFORM_COMMAND="${WORKSPACE}/terraform"
+                        $TERRAFORM_COMMAND init 
+                        $TERRAFORM_COMMAND plan
+
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Go or NoGo') {
+            steps {
+                script {
+                    env.Proceed = input message: 'User input required',
+                    parameters: [choice(name: 'Do you want to continue with apply?', choices: 'no\nyes', description: 'Choose "yes" if you want to deploy this build')]
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            when {
+                environment name: 'Proceed', value: 'yes'
+                expression { params.DESTROY == 'False' }
+                }
+                steps {
+                    script {
+                        ansiColor('xterm') {
+                            sh  '''
+                            JOB_BASE_NAME=$(echo $JOB_BASE_NAME|tr '[:upper:]' '[:lower:]') 
+                            pwd
+                            ls -l
+                            cd ${JOB_BASE_NAME}
+                            export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/${JOB_BASE_NAME}/aws_credentials
+                            TERRAFORM_COMMAND="${WORKSPACE}/terraform"
+                            $TERRAFORM_COMMAND apply --auto-approve
+                            '''
+                        }
+                    }
+                } 
+            }
+        stage('Terraform Destroy') {
+            when {
+                environment name: 'Proceed', value: 'yes'
+                expression { params.DESTROY == 'True' }
+                }
+            steps {
+                script {
+                    ansiColor('xterm') {
+                    sh '''
+                        JOB_BASE_NAME=$(echo $JOB_BASE_NAME|tr '[:upper:]' '[:lower:]') 
+                        pwd
+                        ls -l
+                        cd ${JOB_BASE_NAME}
+                        export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/${JOB_BASE_NAME}/aws_credentials
+                        TERRAFORM_COMMAND="${WORKSPACE}/terraform"
+                        $TERRAFORM_COMMAND destroy --auto-approve
+                        '''
+                    }
+                }
+            }
+        }
+    } 
+}

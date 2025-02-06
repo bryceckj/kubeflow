@@ -1,0 +1,92 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mnt-pv
+spec:
+  storageClassName: ""
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    path: /
+    server: EFS_DNS
+    readOnly: false
+  claimRef:
+    name: mnt-pvc
+    namespace: admin
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mnt-pvc
+  namespace: admin
+spec:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteMany
+  volumeName: mnt-pv
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mnt
+  namespace: admin
+spec:
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      initContainers:
+      - name: wait
+        image: alpine
+        args:
+        - /bin/sh
+        - -c
+        - sleep 5
+      - name: init-chown
+        image: alpine
+        args:
+        - /bin/sh
+        - -c
+        - chown -R 1000:0 /home/jovyan
+        volumeMounts:
+        - mountPath: /home/jovyan
+          name: persistent-storage
+      - name: init-chmod
+        image: alpine
+        args:
+        - /bin/sh
+        - -c
+        - chmod 775 /home/jovyan
+        volumeMounts:
+        - mountPath: /home/jovyan
+          name: persistent-storage
+
+      containers:
+      - name: pod
+        image: alpine
+        securityContext:
+          runAsUser: 1000
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            mkdir -p "/home/jovyan/volumes/"
+        volumeMounts:
+        - mountPath: /home/jovyan
+          name: persistent-storage
+      volumes:
+      - name: persistent-storage
+        persistentVolumeClaim:
+          claimName: mnt-pvc
+      imagePullSecrets:
+      - name: regcred
+      restartPolicy: OnFailure
+  activeDeadlineSeconds: 120

@@ -1,0 +1,12 @@
+region                      = "us-west-2"
+jenkins_role                = "arn:aws:iam::<AWS_ACCOUNT_ID>:role/ROLE-USW2-JENKINS-PRD"
+fsx_name                    = "FSX-USW2-KF-PRD"
+fsx_secret_name             = "FSX-KF-USW2-PRD-OUTPUTS"
+storage_type                = "SSD"
+deployment_type             = "PERSISTENT_2"
+backend                     = "S3"
+drive_cache_type            = "READ"
+per_unit_storage_throughput = 125
+storage_capacity            = 1200
+backup_days                 = 30
+s3_bucketname               = "s3-usw2-kf-01-prd-fsx"

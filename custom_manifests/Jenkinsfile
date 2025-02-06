@@ -1,0 +1,163 @@
+pipeline {
+  agent {label 'aws-linux-usw2'} 
+  options { skipDefaultCheckout() }
+    stages {
+
+        stage('AWS Credentials') {
+            steps {
+                script {
+                    cleanWs()
+                    checkout scm
+                    sh '''
+export AWS_ROLE_ARN=$(awk -F'= ' '/jenkins_role/{gsub(/"/, "", $2); print $2}' Jenkins/${CLUSTER}/vars)
+aws sts get-caller-identity
+aws sts assume-role --role-session-name Jenkins01 --role-arn  ${AWS_ROLE_ARN} > awscre
+hostname -i
+cat > ${WORKSPACE}/aws_credentials <<EOF
+[default]
+output = json
+region = $AWS_DEFAULT_REGION
+aws_access_key_id = $(jq -r .Credentials.AccessKeyId awscre)
+aws_secret_access_key = $(jq -r .Credentials.SecretAccessKey awscre)
+aws_session_token = $(jq -r .Credentials.SessionToken awscre)
+EOF
+                    '''
+                }
+            }
+        }
+
+        stage('Kubernetes Config') {
+            steps {
+                script {
+                    ansiColor('xterm') {
+                    sh '''
+                        pwd
+                        ls -l
+                        export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/aws_credentials
+                        aws sts get-caller-identity
+                        aws eks --region $AWS_DEFAULT_REGION update-kubeconfig --name ${KUBECONFIG_NAME}
+                        kubectl config get-contexts
+                        kubectl config current-context
+                        echo $(aws secretsmanager get-secret-value --secret-id EFS-${KUBECONFIG_NAME}-OUTPUTS --query SecretString --output text --region $AWS_DEFAULT_REGION) > efsout
+                        efs_dns=$(jq -r .efs_dns efsout)
+                        sed -i "s EFS_DNS $efs_dns g" apps/pipeline/upstream/third-party/minio/base/minio-pvc.yaml
+                        cat apps/pipeline/upstream/third-party/minio/base/minio-pvc.yaml
+                        echo $(aws secretsmanager get-secret-value --secret-id HELM-CHART-SECRETS --query SecretString --output text --region $AWS_DEFAULT_REGION) > hcs
+                        cred=$(jq -r .dockerconfigjson hcs)
+                        sed -i "s/DOCKERCONF/$cred/g" Jenkins/regcred.yaml
+                        cat Jenkins/regcred.yaml
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Go or NoGo') {
+            steps {
+                script {
+                    env.Proceed = input message: 'User input required',
+                    parameters: [choice(name: 'Do you want to continue with apply?', choices: 'no\nyes', description: 'Choose "yes" if you want to deploy this build')]
+                }
+            }
+        }
+
+        stage('Kustomize Build') {
+            when {
+                environment name: 'Proceed', value: 'yes'
+                expression { params.LOOP == 'False' }
+                expression { params.DESTROY == 'False' }
+                }
+                steps {
+                    script {
+                        ansiColor('xterm') {
+                            sh  ''' 
+                            pwd
+                            ls -l
+                            export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/aws_credentials
+                            cp /home/ec2-user/.kube/config ${WORKSPACE}/kubeconfig
+                            kubectl patch storageclass gp2 -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+                            kubectl patch storageclass nfs-client -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+                            kubectl patch storageclass gp3 -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+                            export KUSTOMIZE_COMMAND="docker run --rm -v ${WORKSPACE}:/test -w /test -e AWS_SHARED_CREDENTIALS_FILE=/test/aws_credentials -e KUBECONFIG=/test/kubeconfig <image_registry>/kustomize:3.2.1"
+                            $KUSTOMIZE_COMMAND -c "kustomize build example/${CLUSTER} | kubectl apply -f -"
+                            '''
+                        }
+                    }
+                } 
+            }
+        stage('While Loop') {
+            when {
+                environment name: 'Proceed', value: 'yes'
+                expression { params.LOOP == 'True' }
+                expression { params.DESTROY == 'False' }
+                }
+                steps {
+                    script {
+                        ansiColor('xterm') {
+                            sh '''
+                            pwd
+                            ls -l
+                            export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/aws_credentials
+                            cp /home/ec2-user/.kube/config ${WORKSPACE}/kubeconfig
+                            kubectl patch storageclass gp2 -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+                            kubectl patch storageclass nfs-client -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+                            kubectl patch storageclass gp3 -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+                            export KUSTOMIZE_COMMAND="docker run --rm -v ${WORKSPACE}:/test -w /test -e AWS_SHARED_CREDENTIALS_FILE=/test/aws_credentials -e KUBECONFIG=/test/kubeconfig <image_registry>/kustomize:3.2.1"
+                            while ! $KUSTOMIZE_COMMAND -c "kustomize build example/${CLUSTER} | kubectl apply -f -"; do echo "Retrying to apply resources"; sleep 10; done
+                            '''
+                        }
+                    }
+                }
+            }
+        stage('Configuration') {
+            when {
+                environment name: 'Proceed', value: 'yes'
+                expression { params.DESTROY == 'False' }
+                }
+                steps {
+                    script {
+                        ansiColor('xterm') {
+                            sh '''
+                            pwd
+                            ls -l
+                            export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/aws_credentials
+                            kubectl apply -f ${WORKSPACE}/Jenkins/regcred.yaml
+                            RAWKEY=$(aws secretsmanager get-secret-value --secret-id KF_CERT_KEY --query SecretString --output text --region $AWS_DEFAULT_REGION)
+                            KEYPAIR=$(echo "$RAWKEY" | sed 's/.*: // ; s/"// ; s/"// ; s/{// ; s/}//')
+                            echo "$KEYPAIR" > ${WORKSPACE}/key.pem
+                            kubectl create -n istio-system secret tls istio-ingressgateway-certs --key ${WORKSPACE}/key.pem --cert ${WORKSPACE}/Jenkins/certs/cert.pem --dry-run --save-config -oyaml | kubectl apply -f -
+                            kubectl delete pod -n istio-system `kubectl get pod -n istio-system -l app=istio-ingressgateway | awk '(NR>1){print $1}'`
+                            kubectl patch storageclass gp3 -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+                            kubectl patch storageclass nfs-client -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+                            kubectl config unset contexts.${KUBECONFIG_ARN}
+                            kubectl config unset current-context
+                            kubectl config get-contexts
+                            '''
+                        }
+                    }
+                }
+            }
+        stage('Kustomize Delete') {
+            when {
+                environment name: 'Proceed', value: 'yes'
+                expression { params.DESTROY == 'True' }
+                expression { params.LOOP == 'False' }
+                }
+                steps {
+                    script {
+                        ansiColor('xterm') {
+                            sh  ''' 
+                            pwd
+                            ls -l
+                            export AWS_SHARED_CREDENTIALS_FILE=${WORKSPACE}/aws_credentials
+                            cp /home/ec2-user/.kube/config ${WORKSPACE}/kubeconfig
+                            kubectl delete -f ${WORKSPACE}/Jenkins/regcred.yaml
+                            export KUSTOMIZE_COMMAND="docker run --rm -v ${WORKSPACE}:/test -w /test -e AWS_SHARED_CREDENTIALS_FILE=/test/aws_credentials -e KUBECONFIG=/test/kubeconfig <image_registry>/kustomize:3.2.1"
+                            $KUSTOMIZE_COMMAND -c "kustomize build example/${CLUSTER} | kubectl delete -f -"
+                            '''
+                        }
+                    }
+                } 
+            }
+        } 
+    }
